@@ -24,10 +24,10 @@
 #include <ctype.h>
 
 #include "platform.h"
-#include "version.h"
-#include "debug.h"
 
-#include "build_config.h"
+#include "build/version.h"
+#include "build/debug.h"
+#include "build/build_config.h"
 
 #include "common/axis.h"
 #include "common/maths.h"
@@ -54,7 +54,7 @@
 #include "io/escservo.h"
 #include "io/gps.h"
 #include "io/gimbal.h"
-#include "io/rc_controls.h"
+#include "fc/rc_controls.h"
 #include "io/serial.h"
 #include "io/ledstrip.h"
 #include "io/flashfs.h"
@@ -83,10 +83,13 @@
 #include "telemetry/telemetry.h"
 #include "telemetry/frsky.h"
 
-#include "config/runtime_config.h"
+#include "fc/runtime_config.h"
+
 #include "config/config.h"
+#include "config/config_eeprom.h"
 #include "config/config_profile.h"
 #include "config/config_master.h"
+#include "config/feature.h"
 
 #include "common/printf.h"
 
@@ -241,7 +244,7 @@ static const char * const sensorTypeNames[] = {
 
 static const char * const sensorHardwareNames[4][12] = {
     { "", "None", "MPU6050", "L3G4200D", "MPU3050", "L3GD20", "MPU6000", "MPU6500", "MPU9250", "FAKE", NULL },
-    { "", "None", "ADXL345", "MPU6050", "MMA845x", "BMA280", "LSM303DLHC", "MPU6000", "MPU6500", "MPU9250", "FAKE", NULL },
+    { "", "None", "ADXL345", "MPU6050", "MMA845x", "BMA280", "LSM303DLHC", "MPU6000", "MPU6500", "FAKE", NULL },
     { "", "None", "BMP085", "MS5611", "BMP280", NULL },
     { "", "None", "HMC5883", "AK8975", "AK8963", NULL }
 };
@@ -747,6 +750,7 @@ const clivalue_t valueTable[] = {
     { "frsky_vfas_precision",       VAR_UINT8  | MASTER_VALUE,  &masterConfig.telemetryConfig.frsky_vfas_precision, .config.minmax = { FRSKY_VFAS_PRECISION_LOW,  FRSKY_VFAS_PRECISION_HIGH } },
     { "frsky_vfas_cell_voltage",    VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP,  &masterConfig.telemetryConfig.frsky_vfas_cell_voltage, .config.lookup = { TABLE_OFF_ON } },
     { "hott_alarm_sound_interval",  VAR_UINT8  | MASTER_VALUE,  &masterConfig.telemetryConfig.hottAlarmSoundInterval, .config.minmax = { 0,  120 } },
+    { "pid_values_as_telemetry",    VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP,  &masterConfig.telemetryConfig.pidValuesAsTelemetry, .config.lookup = {TABLE_OFF_ON } },
 #endif
 
     { "battery_capacity",           VAR_UINT16 | MASTER_VALUE,  &masterConfig.batteryConfig.batteryCapacity, .config.minmax = { 0,  20000 } },
@@ -759,7 +763,7 @@ const clivalue_t valueTable[] = {
     { "current_meter_offset",       VAR_UINT16 | MASTER_VALUE,  &masterConfig.batteryConfig.currentMeterOffset, .config.minmax = { 0,  3300 } },
     { "multiwii_current_meter_output", VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP,  &masterConfig.batteryConfig.multiwiiCurrentMeterOutput, .config.lookup = { TABLE_OFF_ON } },
     { "current_meter_type",         VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP,  &masterConfig.batteryConfig.currentMeterType, .config.lookup = { TABLE_CURRENT_SENSOR } },
-
+    { "battery_notpresent_level",   VAR_UINT8  | MASTER_VALUE, &masterConfig.batteryConfig.batterynotpresentlevel, .config.minmax = { 0, 200 } },
     { "align_gyro",                 VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP,  &masterConfig.sensorAlignmentConfig.gyro_align, .config.lookup = { TABLE_ALIGNMENT } },
     { "align_acc",                  VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP,  &masterConfig.sensorAlignmentConfig.acc_align, .config.lookup = { TABLE_ALIGNMENT } },
     { "align_mag",                  VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP,  &masterConfig.sensorAlignmentConfig.mag_align, .config.lookup = { TABLE_ALIGNMENT } },
@@ -826,7 +830,7 @@ const clivalue_t valueTable[] = {
 #endif
 
     { "acc_hardware",               VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP,  &masterConfig.acc_hardware, .config.lookup = { TABLE_ACC_HARDWARE } },
-    { "acc_lpf_hz",                 VAR_FLOAT  | MASTER_VALUE, &masterConfig.acc_lpf_hz, .config.minmax = { 0,  400 } },
+    { "acc_lpf_hz",                 VAR_UINT16 | MASTER_VALUE, &masterConfig.acc_lpf_hz, .config.minmax = { 0,  400 } },
     { "accxy_deadband",             VAR_UINT8  | MASTER_VALUE, &masterConfig.accDeadband.xy, .config.minmax = { 0,  100 } },
     { "accz_deadband",              VAR_UINT8  | MASTER_VALUE, &masterConfig.accDeadband.z, .config.minmax = { 0,  100 } },
     { "acc_unarmedcal",             VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP, &masterConfig.acc_unarmedcal, .config.lookup = { TABLE_OFF_ON } },
@@ -1017,7 +1021,7 @@ static void printRxFail(uint8_t dumpMask, master_t *defaultConfig)
         channelFailsafeConfiguration = &masterConfig.rxConfig.failsafe_channel_configurations[channel];
         channelFailsafeConfigurationDefault = &defaultConfig->rxConfig.failsafe_channel_configurations[channel];
         equalsDefault = channelFailsafeConfiguration->mode == channelFailsafeConfigurationDefault->mode
-	    && channelFailsafeConfiguration->step == channelFailsafeConfigurationDefault->step;
+            && channelFailsafeConfiguration->step == channelFailsafeConfigurationDefault->step;
         requireValue = channelFailsafeConfiguration->mode == RX_FAILSAFE_MODE_SET;
         if (requireValue) {
             const char *format = "rxfail %u %c %d\r\n";
@@ -1139,9 +1143,9 @@ static void printAux(uint8_t dumpMask, master_t *defaultConfig)
         mac = &masterConfig.modeActivationConditions[i];
         macDefault = &defaultConfig->modeActivationConditions[i];
         equalsDefault = mac->modeId == macDefault->modeId
-	    && mac->auxChannelIndex == macDefault->auxChannelIndex
-	    && mac->range.startStep == macDefault->range.startStep
-	    && mac->range.endStep == macDefault->range.endStep;
+            && mac->auxChannelIndex == macDefault->auxChannelIndex
+            && mac->range.startStep == macDefault->range.startStep
+            && mac->range.endStep == macDefault->range.endStep;
         const char *format = "aux %u %u %u %u %u\r\n";
         cliDefaultPrintf(dumpMask, equalsDefault, format,
             i,
@@ -1233,7 +1237,7 @@ static void printSerial(uint8_t dumpMask, master_t *defaultConfig)
             baudRates[serialConfig->portConfigs[i].gps_baudrateIndex],
             baudRates[serialConfig->portConfigs[i].telemetry_baudrateIndex],
             baudRates[serialConfig->portConfigs[i].blackbox_baudrateIndex]
-        );
+            );
     }
 }
 
@@ -1245,7 +1249,7 @@ static void cliSerial(char *cmdline)
     if (isEmpty(cmdline)) {
         printSerial(DUMP_MASTER, NULL);
 
-	return;
+    return;
     }
     serialPortConfig_t portConfig;
     memset(&portConfig, 0 , sizeof(portConfig));
@@ -1401,11 +1405,11 @@ static void printAdjustmentRange(uint8_t dumpMask, master_t *defaultConfig)
     for (uint32_t i = 0; i < MAX_ADJUSTMENT_RANGE_COUNT; i++) {
         ar = &masterConfig.adjustmentRanges[i];
         arDefault = &defaultConfig->adjustmentRanges[i];
-	equalsDefault = ar->auxChannelIndex == arDefault->auxChannelIndex
-	    && ar->range.startStep == arDefault->range.startStep
-	    && ar->range.endStep == arDefault->range.endStep
-	    && ar->adjustmentFunction == arDefault->adjustmentFunction
-	    && ar->auxSwitchChannelIndex == arDefault->auxSwitchChannelIndex
+        equalsDefault = ar->auxChannelIndex == arDefault->auxChannelIndex
+            && ar->range.startStep == arDefault->range.startStep
+            && ar->range.endStep == arDefault->range.endStep
+            && ar->adjustmentFunction == arDefault->adjustmentFunction
+            && ar->auxSwitchChannelIndex == arDefault->auxSwitchChannelIndex
             && ar->adjustmentIndex == arDefault->adjustmentIndex;
         const char *format = "adjrange %u %u %u %u %u %u %u\r\n";
         cliDefaultPrintf(dumpMask, equalsDefault, format,
@@ -1708,8 +1712,8 @@ static void printColor(uint8_t dumpMask, master_t *defaultConfig)
         color = &masterConfig.colors[i];
         colorDefault = &defaultConfig->colors[i];
         equalsDefault = color->h == colorDefault->h
-	    && color->s == colorDefault->s
-	    && color->v == colorDefault->v;
+            && color->s == colorDefault->s
+            && color->v == colorDefault->v;
         const char *format = "color %u %d,%u,%u\r\n";
         cliDefaultPrintf(dumpMask, equalsDefault, format,
             i,
@@ -2251,11 +2255,11 @@ static void printVtx(uint8_t dumpMask, master_t *defaultConfig)
     for (uint32_t i = 0; i < MAX_CHANNEL_ACTIVATION_CONDITION_COUNT; i++) {
         cac = &masterConfig.vtxChannelActivationConditions[i];
         cacDefault = &defaultConfig->vtxChannelActivationConditions[i];
-	equalsDefault = cac->auxChannelIndex == cacDefault->auxChannelIndex
+        equalsDefault = cac->auxChannelIndex == cacDefault->auxChannelIndex
             && cac->band == cacDefault->band
-	    && cac->channel == cacDefault->channel
-	    && cac->range.startStep == cacDefault->range.startStep
-	    && cac->range.endStep == cacDefault->range.endStep;
+            && cac->channel == cacDefault->channel
+            && cac->range.startStep == cacDefault->range.startStep
+            && cac->range.endStep == cacDefault->range.endStep;
         const char *format = "vtx %u %u %u %u %u %u\r\n";
         cliDefaultPrintf(dumpMask, equalsDefault, format,
             i,
@@ -2613,7 +2617,7 @@ static bool valueEqualsDefault(const clivalue_t *value, master_t *defaultConfig)
 
         case VAR_FLOAT:
             result = *(float *)ptr == *(float *)ptrDefault;
-	    break;
+            break;
     }
     return result;
 }
@@ -2716,14 +2720,17 @@ static void printConfig(char *cmdline, bool doDiff)
         printMotorMix(dumpMask, &defaultConfig);
 
 #ifdef USE_SERVOS
+#ifndef CLI_MINIMAL_VERBOSITY
         cliPrint("\r\n# servo\r\n");
+#endif
 		printServo(dumpMask, &defaultConfig);
 
+#ifndef CLI_MINIMAL_VERBOSITY
         cliPrint("\r\n# servo mix\r\n");
+#endif
         // print custom servo mixer if exists
         cliDumpPrintf(dumpMask, masterConfig.customServoMixer[0].rate == 0, "smix reset\r\n\r\n");
 		printServoMix(dumpMask, &defaultConfig);
-
 #endif
 #endif
 
@@ -2804,8 +2811,9 @@ static void printConfig(char *cmdline, bool doDiff)
                 cliDumpProfile(profileCount, dumpMask, &defaultConfig);
 
                 uint8_t currentRateIndex = currentProfile->activeRateProfile;
-                for (uint32_t rateCount=0; rateCount<MAX_RATEPROFILES; rateCount++)
+                for (uint32_t rateCount = 0; rateCount<MAX_RATEPROFILES; rateCount++) {
                     cliDumpRateProfile(rateCount, dumpMask, &defaultConfig);
+                }
 
                 changeControlRateProfile(currentRateIndex);
 #ifndef CLI_MINIMAL_VERBOSITY
@@ -2838,8 +2846,10 @@ static void printConfig(char *cmdline, bool doDiff)
 
 static void cliDumpProfile(uint8_t profileIndex, uint8_t dumpMask, master_t *defaultConfig)
 {
-    if (profileIndex >= MAX_PROFILE_COUNT) // Faulty values
+    if (profileIndex >= MAX_PROFILE_COUNT) {
+        // Faulty values
         return;
+    }
     changeProfile(profileIndex);
 #ifndef CLI_MINIMAL_VERBOSITY
     cliPrint("\r\n# profile\r\n");
@@ -2852,8 +2862,10 @@ static void cliDumpProfile(uint8_t profileIndex, uint8_t dumpMask, master_t *def
 
 static void cliDumpRateProfile(uint8_t rateProfileIndex, uint8_t dumpMask, master_t *defaultConfig)
 {
-    if (rateProfileIndex >= MAX_RATEPROFILES) // Faulty values
+    if (rateProfileIndex >= MAX_RATEPROFILES) {
+        // Faulty values
         return;
+    }
     changeControlRateProfile(rateProfileIndex);
 #ifndef CLI_MINIMAL_VERBOSITY
     cliPrint("\r\n# rateprofile\r\n");
@@ -3113,12 +3125,9 @@ static void cliDefaults(char *cmdline)
 
 static void cliPrint(const char *str)
 {
-    while (*str)
+    while (*str) {
         bufWriterAppend(cliWriter, *str++);
-
-#ifdef USE_SLOW_SERIAL_CLI
-    delay(1);
-#endif
+    }
 }
 
 static void cliPutp(void *p, char ch)
@@ -3133,10 +3142,6 @@ static bool cliDumpPrintf(uint8_t dumpMask, bool equalsDefault, const char *form
         va_start(va, format);
         tfp_format(cliWriter, cliPutp, format, va);
         va_end(va);
-
-#ifdef USE_SLOW_SERIAL_CLI
-        delay(1);
-#endif
 
         return true;
     } else {
@@ -3154,10 +3159,6 @@ static bool cliDefaultPrintf(uint8_t dumpMask, bool equalsDefault, const char *f
         tfp_format(cliWriter, cliPutp, format, va);
         va_end(va);
 
-#ifdef USE_SLOW_SERIAL_CLI
-        delay(1);
-#endif
-
         return true;
     } else {
         return false;
@@ -3170,10 +3171,6 @@ static void cliPrintf(const char *fmt, ...)
     va_start(va, fmt);
     tfp_format(cliWriter, cliPutp, fmt, va);
     va_end(va);
-
-#ifdef USE_SLOW_SERIAL_CLI
-    delay(1);
-#endif
 }
 
 static void cliWrite(uint8_t ch)
@@ -3602,11 +3599,11 @@ void cliProcess(void)
                 cliBuffer[bufferIndex] = 0; // null terminate
 
                 const clicmd_t *cmd;
-		char *options;
+                char *options;
                 for (cmd = cmdTable; cmd < cmdTable + CMD_COUNT; cmd++) {
                     if ((options = checkCommand(cliBuffer, cmd->name))) {
                         break;
-		    }
+            }
                 }
                 if(cmd < cmdTable + CMD_COUNT)
                     cmd->func(options);

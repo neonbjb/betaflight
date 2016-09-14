@@ -20,7 +20,8 @@
 #include <math.h>
 
 #include "platform.h"
-#include "debug.h"
+
+#include "build/debug.h"
 
 #include "common/axis.h"
 #include "common/maths.h"
@@ -102,7 +103,7 @@ void gyroSetCalibrationCycles(void)
     calibratingG = gyroCalculateCalibratingCycles();
 }
 
-static void performAcclerationCalibration(uint8_t gyroMovementCalibrationThreshold)
+static void performGyroCalibration(uint8_t gyroMovementCalibrationThreshold)
 {
     static int32_t g[3];
     static stdev_t var[3];
@@ -164,7 +165,7 @@ void gyroUpdate(void)
     alignSensors(gyroADC, gyroADC, gyroAlign);
 
     if (!isGyroCalibrationComplete()) {
-        performAcclerationCalibration(gyroConfig->gyroMovementCalibrationThreshold);
+        performGyroCalibration(gyroConfig->gyroMovementCalibrationThreshold);
     }
 
     applyGyroZero();

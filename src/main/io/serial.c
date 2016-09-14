@@ -21,7 +21,7 @@
 
 #include "platform.h"
 
-#include "build_config.h"
+#include "build/build_config.h"
 
 #include "common/utils.h"
 
@@ -85,7 +85,7 @@ const serialPortIdentifier_e serialPortIdentifiers[SERIAL_PORT_COUNT] = {
 
 static uint8_t serialPortCount;
 
-const uint32_t baudRates[] = {0, 9600, 19200, 38400, 57600, 115200, 230400, 250000}; // see baudRate_e
+const uint32_t baudRates[] = {0, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 500000, 1000000}; // see baudRate_e
 
 #define BAUD_RATE_COUNT (sizeof(baudRates) / sizeof(baudRates[0]))
 
@@ -270,7 +270,7 @@ serialPort_t *openSerialPort(
     portMode_t mode,
     portOptions_t options)
 {
-#if (!defined(USE_VCP) && !defined(USE_UART1) && !defined(USE_UART2) && !defined(USE_UART3) && !defined(USE_UART4) && !defined(USE_UART5) && !defined(USE_UART6) && !defined(USE_SOFTSERIAL1) && !defined(USE_SOFTSERIAL2))
+#if (!defined(USE_UART1) && !defined(USE_UART2) && !defined(USE_UART3) && !defined(USE_UART4) && !defined(USE_UART5) && !defined(USE_UART6) && !defined(USE_SOFTSERIAL1) && !defined(USE_SOFTSERIAL2))
     UNUSED(callback);
     UNUSED(baudRate);
     UNUSED(mode);
@@ -433,7 +433,7 @@ void handleSerial(void)
     }
 #endif
 
-    mspProcess();
+    mspSerialProcess();
 }
 
 void waitForSerialPortToFinishTransmitting(serialPort_t *serialPort)

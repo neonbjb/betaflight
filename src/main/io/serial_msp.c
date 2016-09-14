@@ -21,9 +21,11 @@
 #include <string.h>
 #include <math.h>
 
-#include "build_config.h"
-#include "debug.h"
 #include "platform.h"
+
+#include "build/build_config.h"
+#include "build/debug.h"
+#include "build/version.h"
 
 #include "common/axis.h"
 #include "common/color.h"
@@ -37,6 +39,7 @@
 
 #include "drivers/serial.h"
 #include "drivers/bus_i2c.h"
+#include "drivers/io.h"
 #include "drivers/gpio.h"
 #include "drivers/timer.h"
 #include "drivers/pwm_rx.h"
@@ -49,7 +52,7 @@
 
 #include "io/beeper.h"
 #include "io/escservo.h"
-#include "io/rc_controls.h"
+#include "fc/rc_controls.h"
 #include "io/gps.h"
 #include "io/gimbal.h"
 #include "io/serial.h"
@@ -83,14 +86,16 @@
 
 #include "blackbox/blackbox.h"
 
-#include "mw.h"
+#include "fc/mw.h"
 
-#include "config/runtime_config.h"
+#include "fc/runtime_config.h"
+
 #include "config/config.h"
+#include "config/config_eeprom.h"
 #include "config/config_profile.h"
 #include "config/config_master.h"
+#include "config/feature.h"
 
-#include "version.h"
 #ifdef USE_HARDWARE_REVISION_DETECTION
 #include "hardware_revision.h"
 #endif
@@ -190,6 +195,10 @@ STATIC_UNIT_TESTED bufWriter_t *writer;
 
 #define RATEPROFILE_MASK (1 << 7)
 
+#define JUMBO_FRAME_SIZE_LIMIT 255
+
+#define DATAFLASH_BUFFER_SIZE 4096
+
 static void serialize8(uint8_t a)
 {
     bufWriterAppend(writer, a);
@@ -227,7 +236,7 @@ static uint32_t read32(void)
     return t;
 }
 
-static void headSerialResponse(uint8_t err, uint8_t responseBodySize)
+static void headSerialResponse(uint8_t err, uint16_t responseBodySize)
 {
     serialBeginWrite(mspSerialPort);
 
@@ -235,11 +244,18 @@ static void headSerialResponse(uint8_t err, uint8_t responseBodySize)
     serialize8('M');
     serialize8(err ? '!' : '>');
     currentPort->checksum = 0;               // start calculating a new checksum
-    serialize8(responseBodySize);
+    if (responseBodySize < JUMBO_FRAME_SIZE_LIMIT) {
+        serialize8(responseBodySize);
+    } else {
+        serialize8(JUMBO_FRAME_SIZE_LIMIT);
+    }
     serialize8(currentPort->cmdMSP);
+    if (responseBodySize >= JUMBO_FRAME_SIZE_LIMIT) {
+        serialize16(responseBodySize);
+    }
 }
 
-static void headSerialReply(uint8_t responseBodySize)
+static void headSerialReply(uint16_t responseBodySize)
 {
     headSerialResponse(0, responseBodySize);
 }
@@ -395,24 +411,37 @@ static void serializeDataflashSummaryReply(void)
 }
 
 #ifdef USE_FLASHFS
-static void serializeDataflashReadReply(uint32_t address, uint8_t size)
+static void serializeDataflashReadReply(uint32_t address, uint16_t size, bool useLegacyFormat)
 {
-    uint8_t buffer[128];
-    int bytesRead;
+    static uint8_t buffer[DATAFLASH_BUFFER_SIZE];
 
     if (size > sizeof(buffer)) {
         size = sizeof(buffer);
     }
 
-    headSerialReply(4 + size);
-
-    serialize32(address);
-
     // bytesRead will be lower than that requested if we reach end of volume
-    bytesRead = flashfsReadAbs(address, buffer, size);
+    int bytesRead = flashfsReadAbs(address, buffer, size);
 
-    for (int i = 0; i < bytesRead; i++) {
+    if (useLegacyFormat) {
+        headSerialReply(sizeof(uint32_t) + size);
+
+        serialize32(address);
+    } else {
+        headSerialReply(sizeof(uint32_t) + sizeof(uint16_t) + bytesRead);
+
+        serialize32(address);
+        serialize16(bytesRead);
+    }
+
+    int i;
+    for (i = 0; i < bytesRead; i++) {
         serialize8(buffer[i]);
+    }
+
+    if (useLegacyFormat) {
+        for (; i < size; i++) {
+            serialize8(0);
+        }
     }
 }
 #endif
@@ -424,7 +453,7 @@ static void resetMspPort(mspPort_t *mspPortToReset, serialPort_t *serialPort)
     mspPortToReset->port = serialPort;
 }
 
-void mspAllocateSerialPorts(serialConfig_t *serialConfig)
+void mspSerialAllocatePorts(serialConfig_t *serialConfig)
 {
     UNUSED(serialConfig);
 
@@ -451,7 +480,7 @@ void mspAllocateSerialPorts(serialConfig_t *serialConfig)
     }
 }
 
-void mspReleasePortIfAllocated(serialPort_t *serialPort)
+void mspSerialReleasePortIfAllocated(serialPort_t *serialPort)
 {
     uint8_t portIndex;
     for (portIndex = 0; portIndex < MAX_MSP_PORT_COUNT; portIndex++) {
@@ -463,7 +492,7 @@ void mspReleasePortIfAllocated(serialPort_t *serialPort)
     }
 }
 
-void mspInit(serialConfig_t *serialConfig)
+void mspSerialInit(serialConfig_t *serialConfig)
 {
     // calculate used boxes based on features and fill availableBoxes[] array
     memset(activeBoxIds, 0xFF, sizeof(activeBoxIds));
@@ -562,7 +591,7 @@ void mspInit(serialConfig_t *serialConfig)
 #endif
 
     memset(mspPorts, 0x00, sizeof(mspPorts));
-    mspAllocateSerialPorts(serialConfig);
+    mspSerialAllocatePorts(serialConfig);
 }
 
 #define IS_ENABLED(mask) (mask == 0 ? 0 : 1)
@@ -1034,7 +1063,7 @@ static bool processOutCommand(uint8_t cmdMSP)
         break;
 
     case MSP_RX_CONFIG:
-        headSerialReply(16);
+        headSerialReply(22);
         serialize8(masterConfig.rxConfig.serialrx_provider);
         serialize16(masterConfig.rxConfig.maxcheck);
         serialize16(masterConfig.rxConfig.midrc);
@@ -1045,6 +1074,9 @@ static bool processOutCommand(uint8_t cmdMSP)
         serialize8(masterConfig.rxConfig.rcInterpolation);
         serialize8(masterConfig.rxConfig.rcInterpolationInterval);
         serialize16(masterConfig.rxConfig.airModeActivateThreshold);
+        serialize8(masterConfig.rxConfig.nrf24rx_protocol);
+        serialize32(masterConfig.rxConfig.nrf24rx_id);
+        serialize8(masterConfig.rxConfig.nrf24rx_channel_count);
         break;
 
     case MSP_FAILSAFE_CONFIG:
@@ -1154,8 +1186,17 @@ static bool processOutCommand(uint8_t cmdMSP)
     case MSP_DATAFLASH_READ:
         {
             uint32_t readAddress = read32();
+            uint16_t readLength;
+            bool useLegacyFormat;
+            if (currentPort->dataSize >= sizeof(uint32_t) + sizeof(uint16_t)) {
+                readLength = read16();
+                useLegacyFormat = false;
+            } else {
+                readLength = 128; 
+                useLegacyFormat = true;
+            }
 
-            serializeDataflashReadReply(readAddress, 128);
+            serializeDataflashReadReply(readAddress, readLength, useLegacyFormat);
         }
         break;
 #endif
@@ -1508,13 +1549,13 @@ static bool processInCommand(void)
         masterConfig.flight3DConfig.deadband3d_low = read16();
         masterConfig.flight3DConfig.deadband3d_high = read16();
         masterConfig.flight3DConfig.neutral3d = read16();
+        masterConfig.flight3DConfig.deadband3d_throttle = read16();
         break;
 
     case MSP_SET_RC_DEADBAND:
         masterConfig.rcControlsConfig.deadband = read8();
         masterConfig.rcControlsConfig.yaw_deadband = read8();
         masterConfig.rcControlsConfig.alt_hold_deadband = read8();
-        masterConfig.flight3DConfig.deadband3d_throttle = read16();
         break;
 
     case MSP_SET_RESET_CURR_PID:
@@ -1699,8 +1740,12 @@ static bool processInCommand(void)
             masterConfig.rxConfig.rcInterpolationInterval = read8();
             masterConfig.rxConfig.airModeActivateThreshold = read16();
         }
+        if (currentPort->dataSize > 16) {
+            masterConfig.rxConfig.nrf24rx_protocol = read8();
+            masterConfig.rxConfig.nrf24rx_id = read32();
+            masterConfig.rxConfig.nrf24rx_channel_count = read8();
+        }
         break;
-
     case MSP_SET_FAILSAFE_CONFIG:
         masterConfig.failsafeConfig.failsafe_delay = read8();
         masterConfig.failsafeConfig.failsafe_off_delay = read8();
@@ -1949,7 +1994,7 @@ STATIC_UNIT_TESTED void setCurrentPort(mspPort_t *port)
     mspSerialPort = currentPort->port;
 }
 
-void mspProcess(void)
+void mspSerialProcess(void)
 {
     uint8_t portIndex;
     mspPort_t *candidatePort;

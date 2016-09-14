@@ -33,6 +33,7 @@
 #include "drivers/system.h"
 #include "drivers/dma.h"
 #include "drivers/gpio.h"
+#include "drivers/io.h"
 #include "drivers/light_led.h"
 #include "drivers/sound_beeper.h"
 #include "drivers/timer.h"
@@ -69,7 +70,7 @@
 #include "io/flashfs.h"
 #include "io/gps.h"
 #include "io/escservo.h"
-#include "io/rc_controls.h"
+#include "fc/rc_controls.h"
 #include "io/gimbal.h"
 #include "io/ledstrip.h"
 #include "io/display.h"
@@ -101,17 +102,22 @@
 #include "flight/failsafe.h"
 #include "flight/navigation.h"
 
-#include "config/runtime_config.h"
+#include "fc/runtime_config.h"
+
 #include "config/config.h"
+#include "config/config_eeprom.h"
 #include "config/config_profile.h"
 #include "config/config_master.h"
+#include "config/feature.h"
+
+#define LOOPTIME_SUSPEND_TIME 3  // Prevent too long busy wait times
 
 #ifdef USE_HARDWARE_REVISION_DETECTION
 #include "hardware_revision.h"
 #endif
 
-#include "build_config.h"
-#include "debug.h"
+#include "build/build_config.h"
+#include "build/debug.h"
 
 extern uint8_t motorControlEnable;
 
@@ -499,7 +505,7 @@ void init(void)
 
     imuInit();
 
-    mspInit(&masterConfig.serialConfig);
+    mspSerialInit(&masterConfig.serialConfig);
 
 #ifdef USE_CLI
     cliInit(&masterConfig.serialConfig);
@@ -597,7 +603,7 @@ void init(void)
         masterConfig.gyro_sync_denom = 1;
     }
 
-    setTargetPidLooptime(gyro.targetLooptime * masterConfig.pid_process_denom); // Initialize pid looptime
+    setTargetPidLooptime((gyro.targetLooptime + LOOPTIME_SUSPEND_TIME) * masterConfig.pid_process_denom); // Initialize pid looptime
 
 #ifdef BLACKBOX
     initBlackbox();
@@ -674,27 +680,12 @@ void main_init(void)
 
     /* Setup scheduler */
     schedulerInit();
-    rescheduleTask(TASK_GYROPID, gyro.targetLooptime); // Add a littlebit of extra time to reduce busy wait
+    rescheduleTask(TASK_GYROPID, gyro.targetLooptime + LOOPTIME_SUSPEND_TIME); // Add a littlebit of extra time to reduce busy wait
     setTaskEnabled(TASK_GYROPID, true);
 
     if (sensors(SENSOR_ACC)) {
         setTaskEnabled(TASK_ACCEL, true);
-        switch (gyro.targetLooptime) {  // Switch statement kept in place to change acc rates in the future
-        case 500:
-        case 375:
-        case 250:
-        case 125:
-            accTargetLooptime = 1000;
-            break;
-        default:
-        case 1000:
-#ifdef STM32F10X
-            accTargetLooptime = 1000;
-#else
-            accTargetLooptime = 1000;
-#endif
-        }
-        rescheduleTask(TASK_ACCEL, accTargetLooptime);
+        rescheduleTask(TASK_ACCEL, accSamplingInterval);
     }
 
     setTaskEnabled(TASK_ATTITUDE, sensors(SENSOR_ACC));

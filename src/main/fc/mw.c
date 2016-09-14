@@ -21,7 +21,8 @@
 #include <math.h>
 
 #include "platform.h"
-#include "debug.h"
+
+#include "build/debug.h"
 
 #include "common/maths.h"
 #include "common/axis.h"
@@ -53,8 +54,8 @@
 #include "io/beeper.h"
 #include "io/display.h"
 #include "io/escservo.h"
-#include "io/rc_controls.h"
-#include "io/rc_curves.h"
+#include "fc/rc_controls.h"
+#include "fc/rc_curves.h"
 #include "io/gimbal.h"
 #include "io/gps.h"
 #include "io/ledstrip.h"
@@ -82,10 +83,11 @@
 #include "flight/gtune.h"
 #include "flight/navigation.h"
 
-#include "config/runtime_config.h"
+#include "fc/runtime_config.h"
 #include "config/config.h"
 #include "config/config_profile.h"
 #include "config/config_master.h"
+#include "config/feature.h"
 
 #include "scheduler/scheduler.h"
 #include "scheduler/scheduler_tasks.h"
@@ -203,7 +205,7 @@ void calculateSetpointRate(int axis, int16_t rc) {
         rcSuperfactor = 1.0f / (constrainf(1.0f - (ABS(rcCommandf) * (currentControlRateProfile->rates[axis] / 100.0f)), 0.01f, 1.00f));
         if (currentProfile->pidProfile.pidController == PID_CONTROLLER_BETAFLIGHT) {
             ptermSetpointRate[axis] = constrainf(angleRate * rcSuperfactor, -1998.0f, 1998.0f);
-            if (currentProfile->pidProfile.ptermSRateWeight < 100 && axis != YAW) {
+            if (currentProfile->pidProfile.ptermSRateWeight < 100 && axis != YAW && !flightModeFlags) {
                 const float pWeight = currentProfile->pidProfile.ptermSRateWeight / 100.0f;
                 angleRate = angleRate + (pWeight * ptermSetpointRate[axis] - angleRate);
             } else {
@@ -422,7 +424,7 @@ void mwDisarm(void)
 void releaseSharedTelemetryPorts(void) {
     serialPort_t *sharedPort = findSharedSerialPort(TELEMETRY_FUNCTION_MASK, FUNCTION_MSP);
     while (sharedPort) {
-        mspReleasePortIfAllocated(sharedPort);
+        mspSerialReleasePortIfAllocated(sharedPort);
         sharedPort = findNextSharedSerialPort(TELEMETRY_FUNCTION_MASK, FUNCTION_MSP);
     }
 }
@@ -455,7 +457,7 @@ void mwArm(void)
             if (feature(FEATURE_BLACKBOX)) {
                 serialPort_t *sharedBlackboxAndMspPort = findSharedSerialPort(FUNCTION_BLACKBOX, FUNCTION_MSP);
                 if (sharedBlackboxAndMspPort) {
-                    mspReleasePortIfAllocated(sharedBlackboxAndMspPort);
+                    mspSerialReleasePortIfAllocated(sharedBlackboxAndMspPort);
                 }
                 startBlackbox();
             }
@@ -716,7 +718,7 @@ void processRx(void)
         } else {
             // the telemetry state must be checked immediately so that shared serial ports are released.
             telemetryCheckState();
-            mspAllocateSerialPorts(&masterConfig.serialConfig);
+            mspSerialAllocatePorts(&masterConfig.serialConfig);
         }
     }
 #endif

@@ -23,7 +23,6 @@
 #define MAX_PROFILE_COUNT 3
 #endif
 #define MAX_RATEPROFILES 3
-#define ONESHOT_FEATURE_CHANGED_DELAY_ON_BOOT_MS 1500
 #define MAX_NAME_LENGTH 16
 
 typedef enum {
@@ -56,13 +55,6 @@ typedef enum {
     FEATURE_SOFTSPI = 1 << 26,
 } features_e;
 
-void latchActiveFeatures(void);
-bool featureConfigured(uint32_t mask);
-bool feature(uint32_t mask);
-void featureSet(uint32_t mask);
-void featureClear(uint32_t mask);
-void featureClearAll(void);
-uint32_t featureMask(void);
 void beeperOffSet(uint32_t mask);
 void beeperOffSetAll(uint8_t beeperCount);
 void beeperOffClear(uint32_t mask);
@@ -74,16 +66,17 @@ void setPreferredBeeperOffMask(uint32_t mask);
 
 void copyCurrentProfileToProfileSlot(uint8_t profileSlotIndex);
 
-void initEEPROM(void);
 void resetEEPROM(void);
-void readEEPROM(void);
 void readEEPROMAndNotify(void);
-void writeEEPROM();
 void ensureEEPROMContainsValidData(void);
+
 void saveConfigAndNotify(void);
+void validateAndFixConfig(void);
+void activateConfig(void);
 
 uint8_t getCurrentProfile(void);
 void changeProfile(uint8_t profileIndex);
+void setProfile(uint8_t profileIndex);
 
 uint8_t getCurrentControlRateProfile(void);
 void changeControlRateProfile(uint8_t profileIndex);

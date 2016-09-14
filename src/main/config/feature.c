@@ -15,17 +15,16 @@
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 
-#include <platform.h>
+#include "platform.h"
 
-#include "build_config.h"
-
-#include "blackbox/blackbox_io.h"
+#include "build/build_config.h"
 
 #include "common/color.h"
 #include "common/axis.h"
-#include "common/filter.h"
 
 #include "drivers/sensor.h"
 #include "drivers/accgyro.h"
@@ -34,10 +33,6 @@
 #include "drivers/timer.h"
 #include "drivers/pwm_rx.h"
 #include "drivers/serial.h"
-#include "drivers/pwm_output.h"
-#include "drivers/max7456.h"
-#include "drivers/io.h"
-#include "drivers/pwm_mapping.h"
 
 #include "sensors/sensors.h"
 #include "sensors/gyro.h"
@@ -51,8 +46,8 @@
 #include "io/serial.h"
 #include "io/gimbal.h"
 #include "io/escservo.h"
-#include "io/rc_controls.h"
-#include "io/rc_curves.h"
+#include "fc/rc_controls.h"
+#include "fc/rc_curves.h"
 #include "io/ledstrip.h"
 #include "io/gps.h"
 #include "io/osd.h"
@@ -69,18 +64,61 @@
 #include "flight/altitudehold.h"
 #include "flight/navigation.h"
 
-#include "config/runtime_config.h"
 #include "config/config.h"
-
 #include "config/config_profile.h"
 #include "config/config_master.h"
+#include "config/feature.h"
 
-// alternative defaults settings for FURYF4 targets
-void targetConfiguration(master_t *config) {
-    config->mag_hardware = MAG_NONE;            // disabled by default
-    config->motor_pwm_rate = 32000;
-    config->failsafeConfig.failsafe_delay = 2;
-    config->failsafeConfig.failsafe_off_delay = 0;
-    config->gyro_sync_denom = 1;
-    config->pid_process_denom = 1;
+static uint32_t activeFeaturesLatch = 0;
+
+void intFeatureSet(uint32_t mask, master_t *config)
+{
+    config->enabledFeatures |= mask;
 }
+
+void intFeatureClear(uint32_t mask, master_t *config)
+{
+    config->enabledFeatures &= ~(mask);
+}
+
+void intFeatureClearAll(master_t *config)
+{
+    config->enabledFeatures = 0;
+}
+
+void latchActiveFeatures()
+{
+    activeFeaturesLatch = masterConfig.enabledFeatures;
+}
+
+bool featureConfigured(uint32_t mask)
+{
+    return masterConfig.enabledFeatures & mask;
+}
+
+bool feature(uint32_t mask)
+{
+    return activeFeaturesLatch & mask;
+}
+
+void featureSet(uint32_t mask)
+{
+    intFeatureSet(mask, &masterConfig);
+}
+
+void featureClear(uint32_t mask)
+{
+    intFeatureClear(mask, &masterConfig);
+}
+
+void featureClearAll()
+{
+    intFeatureClearAll(&masterConfig);
+}
+
+uint32_t featureMask(void)
+{
+    return masterConfig.enabledFeatures;
+}
+
+

@@ -17,7 +17,10 @@
 
 #pragma once
 
-void generateThrottleCurve(controlRateConfig_t *controlRateConfig, escAndServoConfig_t *escAndServoConfig);
-
-int16_t rcLookupThrottle(int32_t tmp);
-
+void latchActiveFeatures(void);
+bool featureConfigured(uint32_t mask);
+bool feature(uint32_t mask);
+void featureSet(uint32_t mask);
+void featureClear(uint32_t mask);
+void featureClearAll(void);
+uint32_t featureMask(void);

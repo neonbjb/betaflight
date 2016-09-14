@@ -39,7 +39,7 @@
 #include "drivers/system.h"
 #include "drivers/nvic.h"
 
-#include "build_config.h"
+#include "build/build_config.h"
 
 
 /* Private typedef -----------------------------------------------------------*/
@@ -305,6 +305,12 @@ uint32_t CDC_Send_DATA(uint8_t *ptrBuffer, uint8_t sendLength)
     return sendLength;
 }
 
+uint32_t CDC_Send_FreeBytes(void)
+{
+    /* this driver is blocking, so the buffer is unlimited */
+    return 255;
+}
+
 /*******************************************************************************
  * Function Name  : Receive DATA .
  * Description    : receive the data from the PC to STM32 and send it through USB
@@ -336,6 +342,11 @@ uint32_t CDC_Receive_DATA(uint8_t* recvBuf, uint32_t len)
     }
 
     return len;
+}
+
+uint32_t CDC_Receive_BytesAvailable(void)
+{
+    return receiveLength;
 }
 
 /*******************************************************************************
